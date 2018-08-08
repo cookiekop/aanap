@@ -8,6 +8,7 @@
 #include <opencv2/stitching/detail/warpers.hpp>
 #include <opencv2/stitching/detail/matchers.hpp>
 
+
 using namespace cv;
 using namespace cv::detail;
 using namespace std;
@@ -67,10 +68,13 @@ private:
     Mat Hg_;
     Mat S_;
 
-    Point2f K_min_, K_max_, K_1_, K_2_;
+    Point2d K_min_, K_max_, K_1_, K_2_;
 
-    vector<Point2f> anchor_points;
-    Point2f offset;
+    vector<Point2d> anchor_points;
+    Point2d offset;
+
+    Mat T_src_;
+    Mat T_dst_;
 
 
 };

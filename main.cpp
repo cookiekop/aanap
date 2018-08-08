@@ -114,25 +114,28 @@ int StitchFrame( vector<Mat> &src, Mat &dst)
 int main() {
     vector<Mat> src;
     for(int i=5; i<7; ++i)
-        src.push_back(imread("./temple_0"+to_string(i)+".jpg"));
+        src.push_back(imread("./temple_"+to_string(i)+".jpg"));
 
     /*for(int i=10; i<13; ++i)
         src.push_back(imread("./"+to_string(i)+".jpg"));*/
 
-    Ptr<cv::xfeatures2d::SIFT> sift=cv::xfeatures2d::SIFT::create(0, 3, 0.02);
+    Ptr<cv::xfeatures2d::SIFT> sift=cv::xfeatures2d::SIFT::create(0, 3, 0.01, 40);
     vector<ImageFeatures> features(IMG_NUM);
     for(int i=0; i<IMG_NUM;++i) {
         /*UMat descriptors;
         detectPoints(src[i], features[i].keypoints, descriptors);
         features[i].img_idx = i;
         features[i].img_size = src[i].size();*/
+        //resize(src[i], src[i], Size(1000,800));
+        features[i].img_idx = i;
+        features[i].img_size = src[i].size();
         sift->detect(src[i], features[i].keypoints);
         sift->compute(src[i], features[i].keypoints, features[i].descriptors);
         cout << features[i].keypoints.size() << endl;
     }
 
     vector<MatchesInfo> matches_info;
-    BestOf2NearestMatcher matcher;
+    BestOf2NearestMatcher matcher(false, 0.5f);
     matcher(features, matches_info);
     matcher.collectGarbage();
     for (int i=0; i< IMG_NUM; ++i) {
@@ -141,6 +144,7 @@ int main() {
             Mat display_match;
             //cout << matches_info[pair_idx].num_inliers << endl;
             drawMatches(src[i], features[i].keypoints, src[j], features[j].keypoints, matches_info[pair_idx].matches, display_match);
+            cout << matches_info[pair_idx].matches.size() << endl;
             imwrite("matches" + to_string(pair_idx) + ".jpg", display_match);
         }
     }
@@ -173,7 +177,7 @@ int main() {
     Ptr<AANAPWarper> warper = new AANAPWarper();
     warper->buildMaps(src, features, matches_info, xmaps_, ymaps_, corners_);
 
-    /*for(int i = 0; i < IMG_NUM; ++i)
+    for(int i = 0; i < IMG_NUM; ++i)
         sizes_[i] = xmaps_[i].size();
     dst_roi_ = resultRoi(corners_, sizes_);
 
@@ -219,7 +223,7 @@ int main() {
     Mat result_img;
     StitchFrame(src, result_img);
 
-    imwrite("result.jpg", result_img);*/
+    imwrite("result.jpg", result_img);
 
     return 0;
 }

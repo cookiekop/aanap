@@ -4,17 +4,24 @@
 
 #include "homography_warp.h"
 
-Point2f homography_warp(const Mat& src, const Mat& H, const Point2f offset, const Size s, Mat& dst)
+Point2d homography_warp(const Mat& src, const Mat& H, const Point2d offset, const Size s, Mat& dst)
 {
-    vector<Point2f> src_p;
+    vector<Point2d> src_p;
     for (int i=0; i<src.rows; ++i) {
-        for(int j=0; j<src.cols; ++j) src_p.emplace_back(Point2f(i, j));
+        for(int j=0; j<src.cols; ++j) src_p.emplace_back(Point2d(i, j));
     }
 
-    vector<Point2f> dst_p;
+    vector<Point2d> dst_p;
     perspectiveTransform(src_p, dst_p, H);
 
-    Point2f Ot = dst_p[src.rows / 2 + src.cols /2];
+    Mat center_point = Mat::ones(Size(1,3), CV_64F);
+    center_point.at<double>(0) = src.cols/2;
+    center_point.at<double>(1) = src.rows/2;
+    center_point.at<double>(2) = 1;
+    center_point = H * center_point;
+    center_point = center_point / center_point.at<double>(2);
+
+    Point2d Ot = Point2d(center_point.at<double>(0), center_point.at<double>(1));
 
     for (int i=0; i<dst_p.size(); ++i) {
         dst_p[i] -= offset;
@@ -58,7 +65,7 @@ Mat taylor_series(const Mat &H, const Point anchor) {
     return A.clone();
 }
 
-Mat homography_linearization(const Mat &H, const Point &center_point, const vector<Point2f> &anchor_points) {
+Mat homography_linearization(const Mat &H, const Point &center_point, const vector<Point2d> &anchor_points) {
     const int vega = 5;
 
     Mat alpha(Size(1,anchor_points.size()), CV_64F);

@@ -13,15 +13,17 @@
 #include "homography_warp.h"
 #include "aanap.h"
 #include "compute_weight.h"
+#include "samplePoint.h"
+
 
 
 using namespace std;
 
 AANAPWarper::AANAPWarper()
 {
-    cell_height_ = 15;
-    cell_width_ = 20;
-    gamma_ = 0.0025;
+    cell_height_ = 10;
+    cell_width_ = 10;
+    gamma_ = 0.1;
     sigma_ = 8.5;
 
     H_s_ = NULL;
@@ -39,23 +41,23 @@ int AANAPWarper::buildMaps(Mat src_img, ImageFeatures src_features, ImageFeature
     /*
      * 初始化矩阵A
      */
-    InitA(src_features, dst_features, matches_info);
+    //InitA(src_features, dst_features, matches_info);
 
     FindS(src_features, dst_features, matches_info, src_img);
 
-    std::vector<Point2f> obj_corners(4);
+    std::vector<Point2d> obj_corners(4);
     obj_corners[0] = cvPoint(0,0); obj_corners[1] = cvPoint( src_img.cols, 0 );
     obj_corners[2] = cvPoint( src_img.cols, src_img.rows ); obj_corners[3] = cvPoint( 0, src_img.rows );
-    std::vector<Point2f> scene_corners(4);
+    std::vector<Point2d> scene_corners(4);
     perspectiveTransform( obj_corners, scene_corners, Hg_);
 
-    float cw = 0, ch = 0;
+    double cw = 0, ch = 0;
 
     offset.x = 0;
     offset.y = 0;
     const int anchor_num = 20;
-    float anchor_dist_w = src_img.cols / (anchor_num + 1);
-    float anchor_dist_h = src_img.rows / (anchor_num + 1);
+    double anchor_dist_w = src_img.cols / (anchor_num + 1);
+    double anchor_dist_h = src_img.rows / (anchor_num + 1);
 
 
 
@@ -79,21 +81,21 @@ int AANAPWarper::buildMaps(Mat src_img, ImageFeatures src_features, ImageFeature
     ch = ch - offset.y;
 
     for(int i=1; i<anchor_num+1; ++i)
-        anchor_points.emplace_back(Point2f(anchor_dist_w * i, 0));
+        anchor_points.emplace_back(Point2d(anchor_dist_w * i, 0));
 
     for(int i=1; i<anchor_num+1; ++i)
-        anchor_points.emplace_back(Point2f(anchor_dist_w * i, src_img.rows));
+        anchor_points.emplace_back(Point2d(anchor_dist_w * i, src_img.rows));
 
     for(int i=1; i<anchor_num+1; ++i)
-        anchor_points.emplace_back(Point2f(src_img.cols, anchor_dist_h * i));
+        anchor_points.emplace_back(Point2d(src_img.cols, anchor_dist_h * i));
 
     for(int i=1; i<anchor_num+1; ++i)
-        anchor_points.emplace_back(Point2f(0, anchor_dist_h * i));
+        anchor_points.emplace_back(Point2d(0, anchor_dist_h * i));
 
 
     Mat h_pano;
 
-    Point2f Ot = homography_warp(src_img, Hg_, offset, Size(cvCeil(cw), cvCeil(ch)), h_pano);
+    Point2d Ot = homography_warp(src_img, Hg_, offset, Size(cvCeil(cw), cvCeil(ch)), h_pano);
 
     for (int i=0; i<dst_img.rows; ++i)
     {
@@ -108,10 +110,13 @@ int AANAPWarper::buildMaps(Mat src_img, ImageFeatures src_features, ImageFeature
 
     imwrite("homography.jpg", h_pano);
 
-    Point2f Or(dst_img.cols /2, dst_img.rows /2);
-    float k,b;
-    k = (Ot.y - Or.y) / (Ot.x - Or.x);
+    Point2d Or(dst_img.cols /2, dst_img.rows /2);
+
+    double k,b;
+    k = (Or.y - Ot.y) / (Or.x - Ot.x);
     b = Or.y - k * Or.x;
+
+    cout << k << " " << b << endl;
 
     K_max_.x = 0;
     for (int i=0; i<4; ++i)
@@ -129,14 +134,15 @@ int AANAPWarper::buildMaps(Mat src_img, ImageFeatures src_features, ImageFeature
     K_min_.y = k*K_min_.x + b;
     K_max_.y = k*K_max_.x + b;
 
-    //cout << K_max_ << " " << K_min_ << endl;
+    cout << K_max_ << " " << K_min_ << endl;
+    cout << K_1_ << " " << K_2_ << endl;
 
     /*
      * 每一个cell做一次DLT
      */
     int inliner_nums = matches_info.num_inliers;
     // 初始化W_
-    W_ = Mat_<apap_float>::zeros(2 * inliner_nums, 2 * inliner_nums);
+    W_ = Mat_<apap_float>::zeros(2 * matches_size, 2 * matches_size);
 
     // 存放每一个cell对应的H
     if(H_s_ != NULL)
@@ -277,6 +283,8 @@ int AANAPWarper::buildMaps( vector<Mat> imgs, vector<ImageFeatures> features,
         }
     }
 
+    cout << "aanap: dst map completed" << endl;
+
     Mat dst_out;
     remap(imgs[mid_idx], dst_out, xmaps[mid_idx], ymaps[mid_idx], INTER_LINEAR);
     imwrite("dst_out.jpg", dst_out);
@@ -332,12 +340,12 @@ int AANAPWarper::CellDLT( int offset_x, int offset_y, ImageFeatures src_features
 
     for(int j = 0, inliner_idx = 0; j < matches_size; j ++)
     {
-        if (!matches_info.inliers_mask[j])
-            continue;
+        /*if (!matches_info.inliers_mask[j])
+            continue;*/
 
         const DMatch& m = matches_info.matches[j];
-        Point2f p1 = src_features.keypoints[m.queryIdx].pt;
-        Point2f p2 = dst_features.keypoints[m.trainIdx].pt;
+        Point2d p1 = src_features.keypoints[m.queryIdx].pt;
+        Point2d p2 = dst_features.keypoints[m.trainIdx].pt;
 
         double weight = exp(-(pow(center_x - p1.x,2) + pow(center_y - p1.y,2)) / pow(sigma_,2));
 
@@ -348,12 +356,14 @@ int AANAPWarper::CellDLT( int offset_x, int offset_y, ImageFeatures src_features
 
 
     //cout << W_.size() << " " << A_.size() << endl;
+
     Mat WA = W_ * A_;
     Mat_<apap_float> h(9, 1);
     SVD::solveZ(WA, h);
+    //eigen2cv(h_e, h);
 
-    vector<float> ab = compute_weight(Point2f(center_x, center_y), K_min_, K_max_);
-    vector<float> cd = compute_weight(Point2f(center_x, center_y), K_1_, K_2_);
+    vector<double> ab = compute_weight(Point2d(center_x, center_y), K_min_, K_max_);
+    vector<double> cd = compute_weight(Point2d(center_x, center_y), K_1_, K_2_);
 
 
     /*
@@ -367,26 +377,35 @@ int AANAPWarper::CellDLT( int offset_x, int offset_y, ImageFeatures src_features
     apap_float *H_ptr = H.ptr<apap_float>(0);
     apap_float *h_ptr = h.ptr<apap_float>(0);
     for(int i = 0; i < 9; i++)
-        H_ptr[i] = h_ptr[i]/h_ptr[8];
+        H_ptr[i] = h_ptr[i];
 
+    H = T_dst_.inv() * (H * T_src_);
+    H = H / H.at<double>(2,2);
+    //Mat H_inv = H.inv();
+    //H_inv = H_inv / H_inv.at<double>(8);
 
-    if (center_x >= dst_img.cols || center_y >= dst_img.rows || center_x <=0 || center_y <=0)
+    //cout << H_inv << endl;
+
+    if (center_x > dst_img.cols || center_y > dst_img.rows || center_x < 0 || center_y < 0)
     {
-        Mat h_linear = homography_linearization(H, Point2f(center_x, center_y), anchor_points);
+        Mat h_linear = homography_linearization(H, Point2d(center_x, center_y), anchor_points);
         H = cd[0] * h_linear + cd[1] * H;
     }
 
-    Mat h_invert;
-    cv::invert(H, h_invert, CV_SVD);
+    Mat h_invert = H.inv();
 
     //cout << ab[0] << " " << ab[1] << endl;
-    H = ab[0] * S_ + ab[1] * H;
-    //cout << H.inv() << endl;
+
+    H = S_ * ab[0] + H * ab[1];
 
     if(H_r.empty())
         H_r.create(3,3);
-    H_r = h_invert * H;
+    H_r = H * h_invert;
+
     if (center_x > dst_img.cols) H_r.setTo(Scalar::all(0));
+
+    //H = H.inv();
+    //H_r = H_r.inv();
     return 0;
 }
 
@@ -394,13 +413,22 @@ int AANAPWarper::CellDLT( int offset_x, int offset_y, ImageFeatures src_features
 void AANAPWarper::FindS(ImageFeatures src_features,	ImageFeatures dst_features, MatchesInfo matches_info, const Mat src)
 {
     cout << "init S" << endl;
-    vector<Point2f> src_p, dst_p;
+    vector<Point2d> src_p, dst_p;
+
+    Point2d center_src(0,0), center_dst(0,0);
 
     for (int i = 0; i < matches_info.matches.size(); ++i)
     {
         //if (!matches_info.inliers_mask[i]) continue;
-        src_p.push_back(src_features.keypoints[matches_info.matches[i].queryIdx].pt);
-        dst_p.push_back(dst_features.keypoints[matches_info.matches[i].trainIdx].pt);
+        Point2d tmp = src_features.keypoints[matches_info.matches[i].queryIdx].pt;
+        src_p.push_back(tmp);
+        center_src.x += tmp.x;
+        center_src.y += tmp.y;
+
+        tmp = dst_features.keypoints[matches_info.matches[i].trainIdx].pt;
+        dst_p.push_back(tmp);
+        center_dst.x += tmp.x;
+        center_dst.y += tmp.y;
     }
 
     Mat drawing = src.clone();
@@ -408,13 +436,115 @@ void AANAPWarper::FindS(ImageFeatures src_features,	ImageFeatures dst_features, 
         circle(drawing, src_p[j], 3,Scalar(255,0,0),-1);
     imwrite("pivot.jpg", drawing);
 
+    center_dst.x /= src_p.size();
+    center_dst.y /= src_p.size();
+    center_src.y /= src_p.size();
+    center_src.x /= src_p.size();
+
+    double mean_dist_src = 0, mean_dist_dst = 0;
+    for (int i=0; i<src_p.size(); ++i) {
+        double dist = sqrt(pow(src_p[i].x - center_src.x, 2) + pow(src_p[i].y - center_src.y, 2));
+        mean_dist_src += dist;
+
+        dist = sqrt(pow(dst_p[i].x - center_dst.x, 2) + pow(dst_p[i].y - center_dst.y, 2));
+        mean_dist_dst += dist;
+    }
+    mean_dist_src /= src_p.size();
+    mean_dist_dst /= src_p.size();
+
+    double scale_src = sqrt(2)/mean_dist_src;
+    double scale_dst = sqrt(2)/mean_dist_dst;
+    
+    T_src_.create(Size(3,3), CV_64F);
+    T_dst_.create(Size(3,3), CV_64F);
+
+    T_src_.at<double>(0,0) = T_src_.at<double>(1,1) = scale_src;
+    T_src_.at<double>(0,1) = T_src_.at<double>(1,0) = T_src_.at<double>(2,0) = T_src_.at<double>(2,1) = 0;
+    T_src_.at<double>(0,2) = -scale_src*center_src.x;
+    T_src_.at<double>(1,2) = -scale_src*center_src.y;
+    T_src_.at<double>(2,2) = 1;
+
+    T_dst_.at<double>(0,0) = T_dst_.at<double>(1,1) = scale_dst;
+    T_dst_.at<double>(0,1) = T_dst_.at<double>(1,0) = T_dst_.at<double>(2,0) = T_dst_.at<double>(2,1) = 0;
+    T_dst_.at<double>(0,2) = -scale_dst*center_dst.x;
+    T_dst_.at<double>(1,2) = -scale_dst*center_dst.y;
+    T_dst_.at<double>(2,2) = 1;
+
+    A_ = Mat_<apap_float>::zeros(2 * matches_info.matches.size(), 9);
+    //vector<Point2d> in_src, in_dst, out_src, out_dst;
+    for (int i=0 , inliner_idx = 0; i<src_p.size(); ++i) {
+        Mat temp_pt(Size(1,3), CV_64F);
+        temp_pt.at<double>(0) = src_p[i].x;
+        temp_pt.at<double>(1) = src_p[i].y;
+        temp_pt.at<double>(2) = 1;
+        temp_pt = T_src_ * temp_pt;
+        src_p[i].x = temp_pt.at<double>(0);
+        src_p[i].y = temp_pt.at<double>(1);
+
+        temp_pt.at<double>(0) = dst_p[i].x;
+        temp_pt.at<double>(1) = dst_p[i].y;
+        temp_pt.at<double>(2) = 1;
+        temp_pt = T_dst_ * temp_pt;
+        dst_p[i].x = temp_pt.at<double>(0);
+        dst_p[i].y = temp_pt.at<double>(1);
+
+        int j = inliner_idx * 2;
+
+        A_(j, 0) = A_(j, 1) = A_(j, 2) = 0;
+        A_(j, 3) = -src_p[i].x;
+        A_(j, 4) = -src_p[i].y;
+        A_(j, 5) = -1;
+        A_(j, 6) = dst_p[i].y * src_p[i].x;
+        A_(j, 7) = dst_p[i].y * src_p[i].y;
+        A_(j, 8) = dst_p[i].y;
+
+        A_(j + 1, 0) = src_p[i].x;
+        A_(j + 1, 1) = src_p[i].y;
+        A_(j + 1, 2) = 1;
+        A_(j + 1, 3) = A_(j + 1, 4) = A_(j + 1, 5) = 0;
+        A_(j + 1, 6) = -dst_p[i].x * src_p[i].x;
+        A_(j + 1, 7) = -dst_p[i].x * src_p[i].y;
+        A_(j + 1, 8) = -dst_p[i].x;
+
+        inliner_idx ++;
+
+        /*if (matches_info.inliers_mask[i]) {
+            in_src.push_back(src_p[i]);
+            in_dst.push_back(dst_p[i]);
+
+        }
+        else {
+            out_src.push_back(src_p[i]);
+            out_dst.push_back(dst_p[i]);
+        }*/
+    }
+
+    //cout << A_ << endl;
+    //vector<uchar> RansacStatus;
+    Mat_<apap_float> hg(9, 1);
+    SVD::solveZ(A_, hg);
+    if(Hg_.empty())
+        Hg_.create(Size(3,3), CV_64F);
+    for(int i = 0; i < 9; i++)
+        Hg_.at<double>(i) = hg.at<double>(i);
+    //Hg_ = findHomography(in_src, in_dst);
+    Hg_ = T_dst_.inv() * (Hg_ * T_src_);
+    Hg_ = Hg_ / Hg_.at<double>(2,2);
+    cout << Hg_ << endl;
+
+
+
+
+
     vector<Mat> S_segment;
     vector<double> theta;
     int t = 0;
     while (1) {
-        vector<Point2f> RR_keypoint01, RR_keypoint02;
-        vector<uchar> RansacStatus;
-        Mat Fundamental = findFundamentalMat(src_p, dst_p, RansacStatus, FM_RANSAC, 1);
+        vector<Point2d> RR_keypoint01, RR_keypoint02;
+        samplePoint(src_p, dst_p, 50, 1.5, RR_keypoint01, RR_keypoint02);
+        /*vector<uchar> RansacStatus;
+        Mat Fundamental = findHomography(src_p, dst_p, FM_RANSAC, 1, RansacStatus, 2000, 0.995);
+
         int i = 0;
         RR_keypoint01.clear();
         RR_keypoint02.clear();
@@ -429,8 +559,7 @@ void AANAPWarper::FindS(ImageFeatures src_features,	ImageFeatures dst_features, 
                 dst_p.erase(dst_p.begin() + i);
             }
             ++i;
-        }
-
+        }*/
 
         if (RR_keypoint01.size() < 50) break;
 
@@ -460,9 +589,11 @@ void AANAPWarper::FindS(ImageFeatures src_features,	ImageFeatures dst_features, 
             index += 2;
         }
 
+        //cout << A << endl;
         Mat invert_A = A.inv(DECOMP_SVD);
         //cv::invert(A, invert_A, CV_SVD);
         Mat beta = invert_A * b;
+        //cout << beta << endl;
 
         theta.push_back(atan(beta.at<double>(1) / beta.at<double>(0)));
 
@@ -479,22 +610,35 @@ void AANAPWarper::FindS(ImageFeatures src_features,	ImageFeatures dst_features, 
         S_segment.push_back(S_temp);
 
         Mat drawing = src.clone();
-        for (int j=0; j< RR_keypoint01.size(); ++j)
-            circle(drawing, RR_keypoint01[j], 3,Scalar(255,0,0),-1);
+        for (int j=0; j< RR_keypoint01.size(); ++j) {
+            Point2d point_norm;
+            Mat temp_pt(Size(1,3), CV_64F);
+            temp_pt.at<double>(0) = RR_keypoint01[j].x;
+            temp_pt.at<double>(1) = RR_keypoint01[j].y;
+            temp_pt.at<double>(2) = 1;
+            temp_pt = T_src_.inv() * temp_pt;
+            point_norm.x = temp_pt.at<double>(0);
+            point_norm.y = temp_pt.at<double>(1);
+            circle(drawing, point_norm, 3,Scalar(255,0,0),-1);
+        }
+
         imwrite("ransac"+to_string(t++)+".jpg", drawing);
     }
 
     double theta_min = 9999;
     int index = 0;
     for (int i=0; i<t; ++i) {
-        if (theta[i] < theta_min) {
-            theta_min = theta[i];
+        if (abs(theta[i]) < theta_min) {
+            theta_min = abs(theta[i]);
             index = i;
         }
     }
 
+    cout << index << " " << theta_min << endl;
+
     S_ = S_segment[index];
 
+    S_ = T_dst_.inv() * (S_ * T_src_);
     cout << S_ << endl;
 }
 
